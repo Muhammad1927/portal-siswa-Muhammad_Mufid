@@ -5,14 +5,12 @@ const { v4: uuidv4 } = require("uuid");
 const app = express();
 app.use(express.json());
 
-// Koneksi ke MongoDB (pastikan MongoDB berjalan)
 mongoose.connect("mongodb+srv://root:root@ppqitadb.nytneum.mongodb.net/", {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 });
 const db = mongoose.connection;
 
-// Membuat model User
 const userSchema = new mongoose.Schema({
   _id: { type: String, default: uuidv4 },
   nama: { type: String, required: true, minlength: 3, maxlength: 20 },
@@ -31,9 +29,20 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model("User", userSchema);
 
-// Endpoint untuk mendaftarkan siswa
 app.post("/api/register", async (req, res) => {
   const { nama, NIS, password } = req.body;
+
+  if (
+    nama.length < 3 &&
+    nama.length > 20 &&
+    NIS.length !== 5 &&
+    password.length < 6 &&
+    password.length > 14
+  ) {
+    return res
+      .status(400)
+      .json({ message: "Data siswa tidak memenuhi persyaratan" });
+  }
 
   try {
     const user = new User({ nama, NIS, password });
@@ -46,33 +55,41 @@ app.post("/api/register", async (req, res) => {
   }
 });
 
-// Endpoint untuk login
 app.post("/api/login", async (req, res) => {
   const { NIS, password } = req.body;
+
+  if (!NIS && !password) {
+    return res.status(400).json({ message: "NIS dan password harus diisi" });
+  }
 
   try {
     const user = await User.findOne({ NIS, password, status: "aktif" });
     if (!user) {
-      res.status(401).json({ message: "Login gagal" });
-    } else {
-      const token = uuidv4();
-      user.token = token;
-      await user.save();
-      res.json({ token });
+      return res.status(401).json({ message: "Login gagal" });
     }
+
+    const token = uuidv4();
+    user.token = token;
+    await user.save();
+    res.json({ token });
   } catch (error) {
     res.status(500).json({ message: "Terjadi kesalahan server" });
   }
 });
 
-// Endpoint untuk cek token
 app.post("/api/checkToken", async (req, res) => {
   const { token } = req.body;
+
+  if (!token) {
+    return res
+      .status(400)
+      .json({ message: "Token harus disertakan dalam permintaan" });
+  }
 
   try {
     const user = await User.findOne({ token });
     if (!user) {
-      res.status(404).json({ message: "Token tidak ditemukan" });
+      return res.status(404).json({ message: "Token tidak ditemukan" });
     } else {
       const { _id, nama, NIS, status, role } = user;
       res.json({ _id, nama, NIS, status, role });
@@ -82,14 +99,19 @@ app.post("/api/checkToken", async (req, res) => {
   }
 });
 
-// Endpoint untuk logout
 app.post("/api/logout", async (req, res) => {
   const { token } = req.body;
+
+  if (!token) {
+    return res
+      .status(400)
+      .json({ message: "Token harus disertakan dalam permintaan" });
+  }
 
   try {
     const user = await User.findOne({ token });
     if (!user) {
-      res.status(401).json({ message: "Token tidak valid" });
+      return res.status(401).json({ message: "Token tidak valid" });
     } else {
       user.token = "";
       await user.save();
@@ -100,8 +122,7 @@ app.post("/api/logout", async (req, res) => {
   }
 });
 
-// Mengatur server untuk mendengarkan pada port tertentu
-const PORT = 3000;
+const PORT = 3003;
 app.listen(PORT, () => {
   console.log(`Server berjalan di http://localhost:${PORT}`);
 });
