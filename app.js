@@ -1,128 +1,179 @@
 const express = require("express");
 const mongoose = require("mongoose");
-const { v4: uuidv4 } = require("uuid");
-
+const uuid = require("uuid");
 const app = express();
-app.use(express.json());
+const port = 3000;
 
-mongoose.connect("mongodb+srv://root:root@ppqitadb.nytneum.mongodb.net/", {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+app.use(express.json());
+app.use(express.static("public"));
+
+const uri = "mongodb+srv://root:root@ppqitadb.nytneum.mongodb.net/";
+
+let myCollection, myClient;
+
+const initDB = async () => {
+  try {
+    const { collection, client } = await connectionDB(
+      uri,
+      "portal-siswa",
+      "users"
+    );
+
+    myCollection = collection;
+    myClient = client;
+    console.log("Server DB berjalan");
+  } catch (error) {
+    console.log(error);
+  }
+};
+
+const connectionDB = async (uri, dbName, collectionName) => {
+  const client = await mongoose.connect(uri, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    dbName: dbName,
+  });
+
+  const collection = client.connection.collection(collectionName);
+
+  return { collection, client };
+};
+
+initDB();
+
 const db = mongoose.connection;
 
 const userSchema = new mongoose.Schema({
-  _id: { type: String, default: uuidv4 },
-  nama: { type: String, required: true, minlength: 3, maxlength: 20 },
-  NIS: {
-    type: String,
-    required: true,
-    unique: true,
-    minlength: 5,
-    maxlength: 5,
-  },
-  password: { type: String, required: true, minlength: 6, maxlength: 14 },
-  token: { type: String, default: "" },
-  status: { type: String, default: "aktif" },
-  role: { type: String, default: "siswa" },
+  displayName: String,
+  NIS: String,
+  password: String,
+  token: String,
 });
 
 const User = mongoose.model("User", userSchema);
 
-app.post("/api/register", async (req, res) => {
-  const { nama, NIS, password } = req.body;
+// Mendaftarkan siswa
+app.post("/register", async (req, res) => {
+  const { displayName, NIS, password } = req.body;
 
-  if (
-    nama.length < 3 &&
-    nama.length > 20 &&
-    NIS.length !== 5 &&
-    password.length < 6 &&
-    password.length > 14
-  ) {
+  // Validasi data (sesuaikan dengan aturan validasi MongoDB)
+  if (!displayName || displayName.length < 3 || displayName.length > 20) {
     return res
       .status(400)
-      .json({ message: "Data siswa tidak memenuhi persyaratan" });
+      .json({ message: "Nama harus memiliki 3-20 karakter" });
+  }
+
+  if (!NIS || NIS.length !== 5) {
+    return res
+      .status(400)
+      .json({ message: "NIS harus terdiri dari 5 karakter" });
+  }
+
+  if (!password || password.length < 6 || password.length > 14) {
+    return res
+      .status(400)
+      .json({ message: "Password harus memiliki 6-14 karakter" });
   }
 
   try {
-    const user = new User({ nama, NIS, password });
-    await user.save();
-    res.status(201).json({ message: "Pendaftaran berhasil" });
-  } catch (error) {
-    res
-      .status(400)
-      .json({ message: "Pendaftaran gagal", error: error.message });
+    // Cek apakah NIS sudah terdaftar
+    const existingUser = await User.findOne({ NIS });
+
+    if (existingUser) {
+      return res.status(400).json({ message: "NIS sudah terdaftar" });
+    }
+
+    // Buat UUID dan token
+    const id = uuid.v4();
+    const token = uuid.v4();
+
+    // Simpan data ke MongoDB
+    const newUser = new User({ displayName, NIS, password, token });
+    await newUser.save();
+
+    return res.status(200).json({ message: "Pendaftaran berhasil" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Terjadi kesalahan server" });
   }
 });
 
-app.post("/api/login", async (req, res) => {
+// Login
+app.post("/login", async (req, res) => {
   const { NIS, password } = req.body;
 
-  if (!NIS && !password) {
-    return res.status(400).json({ message: "NIS dan password harus diisi" });
+  // Validasi data
+  if (!NIS || !password) {
+    return res.status(400).json({ message: "NIS dan password diperlukan" });
   }
 
   try {
-    const user = await User.findOne({ NIS, password, status: "aktif" });
+    const user = await User.findOne({ NIS, password });
+
     if (!user) {
       return res.status(401).json({ message: "Login gagal" });
     }
 
-    const token = uuidv4();
+    // Buat dan kirimkan token
+    const token = uuid.v4();
     user.token = token;
     await user.save();
-    res.json({ token });
-  } catch (error) {
-    res.status(500).json({ message: "Terjadi kesalahan server" });
+
+    return res.status(200).json({ token });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Terjadi kesalahan server" });
   }
 });
 
-app.post("/api/checkToken", async (req, res) => {
+app.post("/check-token", async (req, res) => {
   const { token } = req.body;
-
-  if (!token) {
-    return res
-      .status(400)
-      .json({ message: "Token harus disertakan dalam permintaan" });
-  }
 
   try {
     const user = await User.findOne({ token });
-    if (!user) {
-      return res.status(404).json({ message: "Token tidak ditemukan" });
-    } else {
-      const { _id, nama, NIS, status, role } = user;
-      res.json({ _id, nama, NIS, status, role });
-    }
-  } catch (error) {
-    res.status(500).json({ message: "Terjadi kesalahan server" });
-  }
-});
 
-app.post("/api/logout", async (req, res) => {
-  const { token } = req.body;
-
-  if (!token) {
-    return res
-      .status(400)
-      .json({ message: "Token harus disertakan dalam permintaan" });
-  }
-
-  try {
-    const user = await User.findOne({ token });
     if (!user) {
       return res.status(401).json({ message: "Token tidak valid" });
-    } else {
-      user.token = "";
-      await user.save();
-      res.json({ message: "Logout berhasil" });
     }
-  } catch (error) {
-    res.status(500).json({ message: "Terjadi kesalahan server" });
+
+    // Kirim data pengguna
+    const userData = {
+      id: user.id,
+      displayName: user.displayName,
+      NIS: user.NIS,
+      status: "aktif",
+      role: "siswa",
+    };
+
+    return res.status(200).json(userData);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Terjadi kesalahan server" });
   }
 });
 
-const PORT = 3003;
-app.listen(PORT, () => {
-  console.log(`Server berjalan di http://localhost:${PORT}`);
+// Logout
+app.post("/logout", async (req, res) => {
+  const { token } = req.body;
+
+  try {
+    const user = await User.findOne({ token });
+
+    if (!user) {
+      return res.status(401).json({ message: "Token tidak valid" });
+    }
+
+    // Hapus token
+    user.token = "";
+    await user.save();
+
+    return res.status(200).json({ message: "Logout berhasil" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Terjadi kesalahan server" });
+  }
+});
+
+app.listen(port, () => {
+  console.log(`Server berjalan di http://localhost:${port}`);
 });
